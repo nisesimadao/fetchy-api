@@ -24,6 +24,8 @@ jobs: Dict[str, Any] = {}
 TEMP_DIR = "/tmp/fetchy-downloads"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
+import sys
+
 class MyLogger:
     def __init__(self, job_id):
         self.job_id = job_id
@@ -34,19 +36,24 @@ class MyLogger:
             
     def info(self, msg):
         jobs[self.job_id]["log"] += f"{msg}\n"
-        print(f"[{self.job_id}] {msg}")
+        print(f"[{self.job_id}] {msg}", flush=True)
 
     def warning(self, msg):
         jobs[self.job_id]["log"] += f"WARNING: {msg}\n"
-        print(f"[{self.job_id}] WARNING: {msg}")
+        print(f"[{self.job_id}] WARNING: {msg}", flush=True)
 
     def error(self, msg):
         jobs[self.job_id]["log"] += f"ERROR: {msg}\n"
-        print(f"[{self.job_id}] ERROR: {msg}")
+        print(f"[{self.job_id}] ERROR: {msg}", flush=True)
 
 def progress_hook(d):
     job_id = d.get('info_dict', {}).get('job_id')
-    if not job_id: return
+    if not job_id:
+        # Fallback to the first job if only one is running (simple test)
+        if len(jobs) == 1:
+            job_id = list(jobs.keys())[0]
+        else:
+            return
     
     if d['status'] == 'downloading':
         p = d.get('_percent_str', '0%').replace('%', '').strip()
@@ -60,6 +67,7 @@ def progress_hook(d):
         jobs[job_id]["status"] = "merging"
 
 def run_download(job_id: str, url: str, quality: str):
+    print(f"[WORKER] Starting job {job_id} for {url}", flush=True)
     jobs[job_id]["status"] = "analyzing"
     
     ydl_opts = {
@@ -70,18 +78,24 @@ def run_download(job_id: str, url: str, quality: str):
         'progress_hooks': [progress_hook],
         'nocheckcertificate': True,
         'referer': 'https://www.youtube.com/embed/',
-        # Bypassing measures
         'extractor_args': {
             'youtube': {
-                'player_client': ['tv', 'web'],
+                'player_client': ['tv', 'mweb'],
                 'skip': ['dash', 'hls']
             }
+        },
+        'postprocessor_args': {
+            'ffmpeg': ['-movflags', 'faststart']
         }
     }
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # We need to pass job_id to the hook via info_dict
+            print(f"[YDL] Extracting: {url}", flush=True)
+            # Add job_id to params so it's available in the hook
+            ydl.params['job_id'] = job_id 
+            # Note: The hook might get job_id from ydl.params if not in info_dict
+            
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             # If merged, the extension might change to .mp4 explicitly
@@ -92,6 +106,7 @@ def run_download(job_id: str, url: str, quality: str):
             jobs[job_id]["title"] = info.get('title', 'video')
             jobs[job_id]["status"] = "completed"
             jobs[job_id]["progress"] = 1.0
+            print(f"[WORKER] Finished job {job_id}", flush=True)
     except Exception as e:
         jobs[job_id]["status"] = "failed"
         jobs[job_id]["log"] += f"CRITICAL ERROR: {str(e)}\n"
@@ -151,7 +166,7 @@ async def get_log(job_id: str):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "backend": "python/fastapi"}
+    return {"status": "ok", "backend": "python/fastapi", "version": "1.1"}
 
 # Cleanup thread
 def cleanup_worker():
