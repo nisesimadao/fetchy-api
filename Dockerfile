@@ -1,22 +1,28 @@
-FROM node:20-bookworm-slim
+FROM python:3.11-slim-bookworm
 
-# Install system dependencies
+# Install system dependencies including Node.js and ffmpeg
 RUN apt-get update && apt-get install -y \
-    python3 \
-    ffmpeg \
     curl \
+    ffmpeg \
+    gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Install latest yt-dlp binary from GitHub
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
-RUN chmod a+rx /usr/local/bin/yt-dlp
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp
+
+# Ensure JS runtimes are linked for yt-dlp
+RUN ln -s /usr/bin/node /usr/bin/js || true && \
+    ln -s /usr/bin/node /usr/bin/nodejs || true
 
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
 
-# Install app dependencies
+# Install App dependencies (Node.js part)
 RUN npm ci --omit=dev
 
 # Copy app source

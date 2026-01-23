@@ -33,19 +33,25 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
         const args = [
             url,
             '-o', outputTemplate,
-            '--format', `bestvideo[height<=${quality.replace('p', '')}]+bestaudio/best`,
+            '--format', 'bestvideo+bestaudio/best',
             '--merge-output-format', 'mp4',
             '--no-playlist',
             '--newline',
             '--progress',
             '--force-ipv4',
-            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            '--extractor-args', 'youtube:player-client=ios,web,android'
+            '--no-check-certificates',
+            '--extractor-args', 'youtube:player-client=android_embedded,web_embedded;player-skip=web,mweb,ios,android,tv'
         ];
 
         console.log(`[YTDLP] Spawning: yt-dlp ${args.join(' ')}`);
+        console.log(`[YTDLP] Current PATH: ${process.env.PATH}`);
 
-        const ytDlpProcess = spawn('yt-dlp', args);
+        const ytDlpProcess = spawn('yt-dlp', args, {
+            env: {
+                ...process.env,
+                PATH: `${process.env.PATH}:/usr/local/bin:/usr/bin:/bin`
+            }
+        });
 
         ytDlpProcess.stdout.on('data', (data) => {
             const output = data.toString();
