@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -33,23 +33,29 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
         const args = [
             url,
             '-o', outputTemplate,
-            '--format', 'bestvideo+bestaudio/best',
+            '--format', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
             '--merge-output-format', 'mp4',
             '--no-playlist',
             '--newline',
             '--progress',
-            '--force-ipv4',
             '--no-check-certificates',
-            '--extractor-args', 'youtube:player-client=android_embedded,web_embedded;player-skip=web,mweb,ios,android,tv'
+            '--no-warn-about-itags',
+            '--youtube-skip-dash-manifest',
+            '--referer', 'https://www.youtube.com/embed/',
+            '--extractor-args', 'youtube:player-client=tv,mweb;player-skip=web,android,ios'
         ];
 
         console.log(`[YTDLP] Spawning: yt-dlp ${args.join(' ')}`);
-        console.log(`[YTDLP] Current PATH: ${process.env.PATH}`);
+
+        // Find node path to be sure
+        const nodePath = spawnSync('which', ['node']).stdout.toString().trim() || '/usr/bin/node';
+        console.log(`[YTDLP] Node path: ${nodePath}`);
 
         const ytDlpProcess = spawn('yt-dlp', args, {
             env: {
                 ...process.env,
-                PATH: `${process.env.PATH}:/usr/local/bin:/usr/bin:/bin`
+                PATH: `${process.env.PATH}:/usr/local/bin:/usr/bin:/bin`,
+                YTDLP_JS_RUNTIME: nodePath
             }
         });
 
