@@ -49,27 +49,36 @@ class MyLogger:
 def progress_hook(d):
     job_id = d.get('info_dict', {}).get('job_id')
     if not job_id:
-        # Fallback to the first job if only one is running (simple test)
-        if len(jobs) == 1:
-            job_id = list(jobs.keys())[0]
+        # Check params if info_dict doesn't have it
+        job_id = d.get('job_id')
+        if not job_id and len(jobs) >= 1:
+            job_id = list(jobs.keys())[-1] # Target most recent
         else:
             return
     
     if d['status'] == 'downloading':
-        p = d.get('_percent_str', '0%').replace('%', '').strip()
+        p_str = d.get('_percent_str', '0%').replace('%', '').strip()
         try:
-            jobs[job_id]["progress"] = float(p) / 100
+            p = float(p_str) / 100
+            jobs[job_id]["progress"] = p
             jobs[job_id]["status"] = "downloading"
+            
+            # Add speed and ETA to logs
+            speed = d.get('_speed_str', 'N/A')
+            eta = d.get('_eta_str', 'N/A')
+            print(f"[{job_id}] Progress: {p_str}% | Speed: {speed} | ETA: {eta}", flush=True)
         except:
             pass
     elif d['status'] == 'finished':
         jobs[job_id]["progress"] = 1.0
         jobs[job_id]["status"] = "merging"
+        print(f"[{job_id}] Download finished, merging...", flush=True)
 
 def run_download(job_id: str, url: str, quality: str):
-    print(f"[WORKER] Starting job {job_id} for {url}", flush=True)
+    print(f"[WORKER] Starting job {job_id} for {url} (Quality: {quality})", flush=True)
     jobs[job_id]["status"] = "analyzing"
     
+    # Base options
     ydl_opts = {
         'format': f'bestvideo[height<={quality.replace("p", "")}][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': f'{TEMP_DIR}/%(id)s.%(ext)s',
@@ -77,40 +86,50 @@ def run_download(job_id: str, url: str, quality: str):
         'logger': MyLogger(job_id),
         'progress_hooks': [progress_hook],
         'nocheckcertificate': True,
-        'referer': 'https://www.youtube.com/embed/',
-        'extractor_args': {
+        'quiet': False,
+        'no_warnings': False,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    }
+    
+    # Service specific bypassing
+    if "youtube.com" in url or "youtu.be" in url:
+        ydl_opts['referer'] = 'https://www.youtube.com/embed/'
+        ydl_opts['extractor_args'] = {
             'youtube': {
                 'player_client': ['tv', 'mweb'],
                 'skip': ['dash', 'hls']
             }
-        },
-        'postprocessor_args': {
-            'ffmpeg': ['-movflags', 'faststart']
         }
-    }
+    elif "x.com" in url or "twitter.com" in url:
+        ydl_opts['referer'] = 'https://x.com/'
+        # Twitter/X sometimes needs better headers for its GraphQL API
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             print(f"[YDL] Extracting: {url}", flush=True)
-            # Add job_id to params so it's available in the hook
             ydl.params['job_id'] = job_id 
-            # Note: The hook might get job_id from ydl.params if not in info_dict
             
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
-            # If merged, the extension might change to .mp4 explicitly
-            if not os.path.exists(filename) and os.path.exists(filename.rsplit('.', 1)[0] + '.mp4'):
-                filename = filename.rsplit('.', 1)[0] + '.mp4'
-                
+            
+            # Handle potential file moves or renames by yt-dlp
+            if not os.path.exists(filename):
+                base_path = filename.rsplit('.', 1)[0]
+                for ext in ['mp4', 'mkv', 'webm']:
+                    if os.path.exists(f"{base_path}.{ext}"):
+                        filename = f"{base_path}.{ext}"
+                        break
+            
             jobs[job_id]["file_path"] = filename
             jobs[job_id]["title"] = info.get('title', 'video')
             jobs[job_id]["status"] = "completed"
             jobs[job_id]["progress"] = 1.0
-            print(f"[WORKER] Finished job {job_id}", flush=True)
+            print(f"[WORKER] Finished job {job_id} -> {filename}", flush=True)
     except Exception as e:
         jobs[job_id]["status"] = "failed"
-        jobs[job_id]["log"] += f"CRITICAL ERROR: {str(e)}\n"
-        print(f"[{job_id}] Failed: {str(e)}")
+        err_msg = str(e)
+        jobs[job_id]["log"] += f"CRITICAL ERROR: {err_msg}\n"
+        print(f"[{job_id}] Failed: {err_msg}", flush=True)
 
 @app.post("/api/download")
 async def create_download(data: Dict[str, str], background_tasks: BackgroundTasks):
