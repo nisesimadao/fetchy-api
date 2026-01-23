@@ -74,8 +74,8 @@ def progress_hook(d):
         jobs[job_id]["status"] = "merging"
         print(f"[{job_id}] Download finished, merging...", flush=True)
 
-def run_download(job_id: str, url: str, quality: str, audio_only: bool = False, ext: str = "mp4"):
-    print(f"[WORKER] Starting job {job_id} for {url} (Quality: {quality}, AudioOnly: {audio_only}, Ext: {ext})", flush=True)
+def run_download(job_id: str, url: str, quality: str, audio_only: bool = False, ext: str = "mp4", bitrate: str = "192"):
+    print(f"[WORKER] Starting job {job_id} for {url} (Quality: {quality}, AudioOnly: {audio_only}, Ext: {ext}, Bitrate: {bitrate})", flush=True)
     jobs[job_id]["status"] = "analyzing"
     
     # Base options
@@ -95,7 +95,7 @@ def run_download(job_id: str, url: str, quality: str, audio_only: bool = False, 
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': ext if ext in ['mp3', 'm4a', 'wav'] else 'm4a',
-                'preferredquality': '192',
+                'preferredquality': bitrate,
             }],
         })
     else:
@@ -141,6 +141,7 @@ def run_download(job_id: str, url: str, quality: str, audio_only: bool = False, 
                 raise Exception(f"Failed to locate file. Checked: {possible_files}")
                 
             jobs[job_id]["file_path"] = final_path
+            jobs[job_id]["filename"] = os.path.basename(final_path)
             jobs[job_id]["status"] = "completed"
             jobs[job_id]["message"] = "Completed successfully"
             jobs[job_id]["progress"] = 1.0
@@ -157,6 +158,7 @@ async def create_download(data: Dict[str, Any], background_tasks: BackgroundTask
     quality = data.get("quality", "1080p")
     audio_only = data.get("audioOnly", False)
     ext = data.get("format", "mp4")
+    bitrate = str(data.get("bitrate", "192"))
     
     if not url:
         raise HTTPException(status_code=400, detail="URL is required")
@@ -167,12 +169,13 @@ async def create_download(data: Dict[str, Any], background_tasks: BackgroundTask
         "progress": 0.0,
         "title": "",
         "file_path": "",
+        "filename": "",
         "log": "",
         "url": url,
         "message": "Queued..."
     }
     
-    background_tasks.add_task(run_download, job_id, url, quality, audio_only, ext)
+    background_tasks.add_task(run_download, job_id, url, quality, audio_only, ext, bitrate)
     return {"jobId": job_id, "status": "queued"}
 
 @app.get("/api/status/{job_id}")
@@ -186,6 +189,7 @@ async def get_status(job_id: str):
         "progress": job["progress"],
         "message": job.get("message", job["status"]),
         "title": job["title"],
+        "filename": job.get("filename", ""),
         "downloadUrl": f"/api/download/{job_id}" if job["status"] == "completed" else None
     }
 
