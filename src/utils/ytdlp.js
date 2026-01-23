@@ -37,7 +37,10 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
             '--merge-output-format', 'mp4',
             '--no-playlist',
             '--newline',
-            '--progress'
+            '--progress',
+            '--force-ipv4',
+            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '--extractor-args', 'youtube:player-client=ios,web,android'
         ];
 
         console.log(`[YTDLP] Spawning: yt-dlp ${args.join(' ')}`);
