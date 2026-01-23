@@ -1,9 +1,10 @@
 FROM python:3.11-slim-bookworm
 
-# Install system dependencies including ffmpeg
+# Install system dependencies including ffmpeg and nodejs (for n-challenge)
 RUN apt-get update && apt-get install -y \
     curl \
     ffmpeg \
+    nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

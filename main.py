@@ -105,13 +105,18 @@ def run_download(job_id: str, url: str, quality: str, audio_only: bool = False, 
         })
     
     # Service specific bypassing
-    if "youtube.com" in url or "youtu.be" in url:
-        ydl_opts['referer'] = 'https://www.youtube.com/embed/'
+    url_lower = url.lower()
+    if "youtube" in url_lower or "youtu.be" in url_lower:
+        ydl_opts['referer'] = 'https://www.youtube.com/'
+        ydl_opts['user_agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
         ydl_opts.setdefault('extractor_args', {})['youtube'] = {
-            'player_client': ['tv', 'mweb'],
+            'player_client': ['ios', 'tv', 'android', 'mweb'],
             'skip': ['dash', 'hls']
         }
-    elif "x.com" in url or "twitter.com" in url:
+        ydl_opts['geo_bypass'] = True
+        ydl_opts['youtube_include_dash_manifest'] = False
+        ydl_opts['youtube_include_hls_manifest'] = False
+    elif "x.com" in url_lower or "twitter.com" in url_lower:
         ydl_opts['referer'] = 'https://x.com/'
     
     try:
