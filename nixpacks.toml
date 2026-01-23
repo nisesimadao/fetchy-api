@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ["nodejs", "python3"]
+nixPkgs = ["nodejs", "python3", "yt-dlp", "ffmpeg"]
 
 [phases.install]
 cmds = ["npm ci"]
