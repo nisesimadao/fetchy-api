@@ -16,15 +16,14 @@ await fs.mkdir(TEMP_DIR, { recursive: true }).catch((err) => {
     console.error(`[YTDLP] Failed to create temp dir: ${err.message}`);
 });
 
+const VERSION = '1.0.4';
+
 /**
  * Download video using yt-dlp binary directly
  * @param {string} url - Video URL
- * @param {string} quality - Quality preference (1080p, 720p, etc.)
- * @param {Function} progressCallback - Progress update callback
- * @returns {Promise<{filePath: string, title: string, log: string}>}
  */
 export async function downloadVideo(url, quality = '1080p', progressCallback) {
-    console.log(`[YTDLP] Starting download: ${url}, quality: ${quality}`);
+    console.log(`[YTDLP] v${VERSION} Starting download: ${url}, quality: ${quality}`);
 
     const outputTemplate = path.join(TEMP_DIR, '%(id)s.%(ext)s');
     let rawLog = '';
@@ -39,7 +38,6 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
             '--newline',
             '--progress',
             '--no-check-certificates',
-            '--no-warn-about-itags',
             '--youtube-skip-dash-manifest',
             '--referer', 'https://www.youtube.com/embed/',
             '--extractor-args', 'youtube:player-client=tv,mweb;player-skip=web,android,ios'
