@@ -1,20 +1,31 @@
 {
   "name": "fetchy-api",
   "version": "1.0.0",
-  "description": "Video download API for Fetchy iOS app using yt-dlp.",
+  "description": "Railway backend API for Fetchy video downloader",
   "main": "src/index.js",
+  "type": "module",
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js"
   },
-  "engines": {
-    "node": ">=18.0.0"
-  },
+  "keywords": [
+    "yt-dlp",
+    "video",
+    "download"
+  ],
+  "author": "",
+  "license": "MIT",
   "dependencies": {
     "express": "^4.18.2",
-    "bull": "^4.12.2"
+    "yt-dlp-wrap": "^2.3.8",
+    "uuid": "^9.0.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1"
   },
   "devDependencies": {
-    "nodemon": "^3.0.3"
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
