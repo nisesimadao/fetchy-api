@@ -1,4 +1,4 @@
-import YTDlpWrap from 'yt-dlp-wrap';
+import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -7,7 +7,7 @@ import { tmpdir } from 'os';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Use system temp directory instead of custom directory
+// Use system temp directory
 const TEMP_DIR = path.join(tmpdir(), 'fetchy-downloads');
 console.log(`[YTDLP] Temp directory: ${TEMP_DIR}`);
 
@@ -17,7 +17,7 @@ await fs.mkdir(TEMP_DIR, { recursive: true }).catch((err) => {
 });
 
 /**
- * Download video using yt-dlp
+ * Download video using yt-dlp binary directly
  * @param {string} url - Video URL
  * @param {string} quality - Quality preference (1080p, 720p, etc.)
  * @param {Function} progressCallback - Progress update callback
@@ -26,22 +26,11 @@ await fs.mkdir(TEMP_DIR, { recursive: true }).catch((err) => {
 export async function downloadVideo(url, quality = '1080p', progressCallback) {
     console.log(`[YTDLP] Starting download: ${url}, quality: ${quality}`);
 
-    // Check if yt-dlp is in PATH
-    try {
-        const { execSync } = await import('child_process');
-        const version = execSync('yt-dlp --version').toString().trim();
-        console.log(`[YTDLP] Found yt-dlp version: ${version}`);
-    } catch (err) {
-        console.error(`[YTDLP] yt-dlp binary NOT found in PATH: ${err.message}`);
-    }
-
-    const ytDlp = new YTDlpWrap();
     const outputTemplate = path.join(TEMP_DIR, '%(id)s.%(ext)s');
     let rawLog = '';
 
-    try {
-        console.log(`[YTDLP] Executing yt-dlp with template: ${outputTemplate}`);
-        const ytDlpProcess = ytDlp.exec([
+    return new Promise((resolve, reject) => {
+        const args = [
             url,
             '-o', outputTemplate,
             '--format', `bestvideo[height<=${quality.replace('p', '')}]+bestaudio/best`,
@@ -49,57 +38,67 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
             '--no-playlist',
             '--newline',
             '--progress'
-        ]);
+        ];
 
-        ytDlpProcess.stdout.on('data', (chunk) => {
-            const data = chunk.toString();
-            rawLog += data;
+        console.log(`[YTDLP] Spawning: yt-dlp ${args.join(' ')}`);
+
+        const ytDlpProcess = spawn('yt-dlp', args);
+
+        ytDlpProcess.stdout.on('data', (data) => {
+            const output = data.toString();
+            rawLog += output;
+            console.log(`[YTDLP] stdout: ${output.trim()}`);
 
             if (progressCallback) {
-                const match = data.match(/(\d+\.\d+)%/);
+                const match = output.match(/(\d+\.\d+)%/);
                 if (match) {
                     const percent = parseFloat(match[1]);
-                    const status = getStatusFromLog(data);
-                    progressCallback(percent / 100, status, data);
+                    const status = getStatusFromLog(output);
+                    progressCallback(percent / 100, status, output);
                 }
             }
         });
 
-        ytDlpProcess.stderr.on('data', (chunk) => {
-            console.error(`[YTDLP] stderr: ${chunk.toString()}`);
+        ytDlpProcess.stderr.on('data', (data) => {
+            const output = data.toString();
+            rawLog += output;
+            console.error(`[YTDLP] stderr: ${output.trim()}`);
         });
 
-        await new Promise((resolve, reject) => {
-            ytDlpProcess.on('close', (code) => {
-                console.log(`[YTDLP] yt-dlp exited with code ${code}`);
-                if (code === 0) resolve();
-                else reject(new Error(`yt-dlp exited with code ${code}`));
-            });
-            ytDlpProcess.on('error', (err) => {
-                console.error(`[YTDLP] Process error:`, err);
-                reject(err);
-            });
+        ytDlpProcess.on('close', async (code) => {
+            console.log(`[YTDLP] Process exited with code ${code}`);
+            if (code === 0) {
+                try {
+                    // Find the newly created file in TEMP_DIR
+                    // Note: This relies on the output template using ID
+                    // A more robust way might be --get-filename first, but let's try this
+                    const files = await fs.readdir(TEMP_DIR);
+                    // Filter by mtime to get the latest file might be better
+                    // For now, look for any video file
+                    const videoFile = files.find(f => f.endsWith('.mp4') || f.endsWith('.mkv') || f.endsWith('.webm'));
+
+                    if (!videoFile) {
+                        return reject(new Error('Downloaded file not found on disk'));
+                    }
+
+                    resolve({
+                        filePath: path.join(TEMP_DIR, videoFile),
+                        title: videoFile,
+                        log: rawLog
+                    });
+                } catch (err) {
+                    reject(err);
+                }
+            } else {
+                reject(new Error(`yt-dlp failed with code ${code}`));
+            }
         });
 
-        // Find downloaded file
-        const files = await fs.readdir(TEMP_DIR);
-        const videoFile = files.find(f => f.endsWith('.mp4') || f.endsWith('.webm') || f.endsWith('.mkv'));
-
-        if (!videoFile) {
-            throw new Error('Downloaded file not found');
-        }
-
-        const filePath = path.join(TEMP_DIR, videoFile);
-
-        return {
-            filePath,
-            title: videoFile,
-            log: rawLog
-        };
-    } catch (error) {
-        console.error('[YTDLP] Error:', error);
-        throw error;
-    }
+        ytDlpProcess.on('error', (err) => {
+            console.error(`[YTDLP] Failed to start process:`, err);
+            reject(err);
+        });
+    });
 }
 
 /**

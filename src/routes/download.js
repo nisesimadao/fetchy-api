@@ -10,6 +10,7 @@ const router = express.Router();
  * Start a new download job
  */
 router.post('/download', async (req, res) => {
+  console.log(`[API] POST /download - URL: ${req.body.url}`);
   try {
     const { url, quality = '1080p' } = req.body;
 
@@ -18,6 +19,7 @@ router.post('/download', async (req, res) => {
     }
 
     const jobId = await addDownloadJob(url, quality);
+    console.log(`[API] Job created: ${jobId}`);
 
     res.json({
       jobId,
@@ -36,6 +38,7 @@ router.post('/download', async (req, res) => {
 router.get('/status/:jobId', (req, res) => {
   const { jobId } = req.params;
   const status = getJobStatus(jobId);
+  console.log(`[API] GET /status/${jobId} - Status: ${status.status}, Progress: ${status.progress}`);
 
   if (status.status === 'not_found') {
     return res.status(404).json({ error: 'Job not found' });
