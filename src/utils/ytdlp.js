@@ -9,9 +9,12 @@ const __dirname = path.dirname(__filename);
 
 // Use system temp directory instead of custom directory
 const TEMP_DIR = path.join(tmpdir(), 'fetchy-downloads');
+console.log(`[YTDLP] Temp directory: ${TEMP_DIR}`);
 
 // Ensure temp directory exists
-await fs.mkdir(TEMP_DIR, { recursive: true }).catch(() => { });
+await fs.mkdir(TEMP_DIR, { recursive: true }).catch((err) => {
+    console.error(`[YTDLP] Failed to create temp dir: ${err.message}`);
+});
 
 /**
  * Download video using yt-dlp
@@ -21,11 +24,23 @@ await fs.mkdir(TEMP_DIR, { recursive: true }).catch(() => { });
  * @returns {Promise<{filePath: string, title: string, log: string}>}
  */
 export async function downloadVideo(url, quality = '1080p', progressCallback) {
+    console.log(`[YTDLP] Starting download: ${url}, quality: ${quality}`);
+
+    // Check if yt-dlp is in PATH
+    try {
+        const { execSync } = await import('child_process');
+        const version = execSync('yt-dlp --version').toString().trim();
+        console.log(`[YTDLP] Found yt-dlp version: ${version}`);
+    } catch (err) {
+        console.error(`[YTDLP] yt-dlp binary NOT found in PATH: ${err.message}`);
+    }
+
     const ytDlp = new YTDlpWrap();
     const outputTemplate = path.join(TEMP_DIR, '%(id)s.%(ext)s');
     let rawLog = '';
 
     try {
+        console.log(`[YTDLP] Executing yt-dlp with template: ${outputTemplate}`);
         const ytDlpProcess = ytDlp.exec([
             url,
             '-o', outputTemplate,
@@ -50,12 +65,20 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
             }
         });
 
+        ytDlpProcess.stderr.on('data', (chunk) => {
+            console.error(`[YTDLP] stderr: ${chunk.toString()}`);
+        });
+
         await new Promise((resolve, reject) => {
             ytDlpProcess.on('close', (code) => {
+                console.log(`[YTDLP] yt-dlp exited with code ${code}`);
                 if (code === 0) resolve();
                 else reject(new Error(`yt-dlp exited with code ${code}`));
             });
-            ytDlpProcess.on('error', reject);
+            ytDlpProcess.on('error', (err) => {
+                console.error(`[YTDLP] Process error:`, err);
+                reject(err);
+            });
         });
 
         // Find downloaded file

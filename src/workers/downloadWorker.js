@@ -34,6 +34,7 @@ export function getJobStatus(jobId) {
  * Process download (no queue, direct execution)
  */
 async function processDownload(jobId, url, quality) {
+    console.log(`[WORKER] Starting job ${jobId} for ${url}`);
     try {
         // Update status to downloading
         jobStatus.set(jobId, {
@@ -52,6 +53,8 @@ async function processDownload(jobId, url, quality) {
                 log
             });
         });
+
+        console.log(`[WORKER] Job ${jobId} completed successfully`);
 
         // Update to completed
         jobStatus.set(jobId, {
