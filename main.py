@@ -159,12 +159,12 @@ def run_download(job_id: str, url: str, quality: str, audio_only: bool = False, 
                         ydl.params['format'] = 'bestaudio/best'
                         ydl.params['postprocessors'] = [{
                             'key': 'FFmpegExtractAudio',
-                            'preferredcodec': ext if ext in ['mp3', 'm4a', 'wav'] else 'm4a',
+                            'preferredcodec': ext if ext in ['mp3', 'm4a', 'wav', 'ogg'] else 'm4a',
                             'preferredquality': bitrate,
                         }]
                     else:
                         if quality == "MAX":
-                            ydl.params['format'] = f'bestvideo[ext={ext if ext in ["mp4", "webm"] else "mp4"}]+bestaudio[ext=m4a]/best[ext={ext if ext in ["mp4", "webm"] else "mp4"}]/best/bestaudio/best'
+                            ydl.params['format'] = f'bestvideo[ext={ext}]+bestaudio[ext=m4a]/best[ext={ext}]/best/bestaudio/best'
                         else:
                             target_h = int(quality.replace("p", ""))
                             # Smart format picking
@@ -174,9 +174,10 @@ def run_download(job_id: str, url: str, quality: str, audio_only: bool = False, 
                                 print(f"[YDL] Target: {target_h}p | Closest: {best_f.get('height')}p", flush=True)
                                 ydl.params['format'] = best_f['format_id']
                             else:
-                                ydl.params['format'] = f'bestvideo[height<={target_h}][ext={ext if ext in ["mp4", "webm"] else "mp4"}]+bestaudio[ext=m4a]/best[height<={target_h}][ext={ext if ext in ["mp4", "webm"] else "mp4"}]/best/bestaudio/best'
+                                ydl.params['format'] = f'bestvideo[height<={target_h}][ext={ext}]+bestaudio[ext=m4a]/best[height<={target_h}][ext={ext}]/best/bestaudio/best'
                         
-                        ydl.params['merge_output_format'] = ext if ext in ['mp4', 'mkv', 'webm'] else 'mp4'
+                        ydl.params['merge_output_format'] = ext
+
 
                     # Perform actual download
                     try:
