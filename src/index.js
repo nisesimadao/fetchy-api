@@ -13,6 +13,12 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Request logging middleware
+app.use((req, res, next) => {
+  console.log(`[REQUEST] ${req.method} ${req.url}`);
+  next();
+});
+
 // Routes
 app.use('/api', downloadRoutes);
 

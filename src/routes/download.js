@@ -15,6 +15,7 @@ router.post('/download', async (req, res) => {
     const { url, quality = '1080p' } = req.body;
 
     if (!url) {
+      console.error('[API] Download error: URL is required for POST /download');
       return res.status(400).json({ error: 'URL is required' });
     }
 
@@ -38,9 +39,8 @@ router.post('/download', async (req, res) => {
 router.get('/status/:jobId', (req, res) => {
   const { jobId } = req.params;
   const status = getJobStatus(jobId);
-  console.log(`[API] GET /status/${jobId} - Status: ${status.status}, Progress: ${status.progress}`);
-
   if (status.status === 'not_found') {
+    console.warn(`[API] GET /status/${jobId}: Job not found.`);
     return res.status(404).json({ error: 'Job not found' });
   }
 
