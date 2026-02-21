@@ -17,7 +17,7 @@ app.use(express.json());
 app.use('/api', downloadRoutes);
 
 // Health check
-app.get('/health', (req, res) => {
+app.get('/', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
