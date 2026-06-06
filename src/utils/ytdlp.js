@@ -27,7 +27,7 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
         const args = [
             url,
             '-o', outputTemplate,
-            '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            '-f', 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best',
             '--merge-output-format', 'mp4',
             '--no-playlist',
             '--no-check-certificates',
