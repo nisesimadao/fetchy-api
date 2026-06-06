@@ -1,4 +1,4 @@
-import { create } from 'youtube-dl-exec';
+import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { tmpdir } from 'os';
@@ -6,6 +6,7 @@ import ffmpeg from 'ffmpeg-static';
 import { supabase, BUCKET_NAME } from './supabase.js';
 
 const TEMP_DIR = path.join(tmpdir(), 'fetchy-downloads');
+const YTDLP_PATH = path.join(process.cwd(), 'yt-dlp');
 
 const ensureDir = async () => {
     try {
@@ -22,74 +23,75 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
     const fileId = `vid_${Date.now()}`;
     const outputTemplate = path.join(TEMP_DIR, `${fileId}.%(ext)s`);
     
-    try {
-        const args = {
-            output: outputTemplate,
-            format: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            mergeOutputFormat: 'mp4',
-            noPlaylist: true,
-            noCheckCertificates: true,
-            ffmpegLocation: ffmpeg,
-            referer: 'https://www.youtube.com/embed/',
-        };
+    return new Promise((resolve, reject) => {
+        const args = [
+            url,
+            '-o', outputTemplate,
+            '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            '--merge-output-format', 'mp4',
+            '--no-playlist',
+            '--no-check-certificates',
+            '--ffmpeg-location', ffmpeg,
+            '--newline',
+            '--progress',
+            '--referer', 'https://www.youtube.com/embed/'
+        ];
 
-        console.log(`[YTDLP] Spawning process with youtube-dl-exec...`);
+        console.log(`[YTDLP] Spawning: ${YTDLP_PATH} ${args.join(' ')}`);
         
-        // Use default create() without arguments for better compatibility
-        const ytdlp = create();
-        
+        const process = spawn(YTDLP_PATH, args);
         let stdoutData = '';
         let stderrData = '';
 
-        // Trigger execution
-        const subprocess = ytdlp(url, args);
-
-        if (subprocess.stdout) {
-            subprocess.stdout.on('data', (data) => {
-                const out = data.toString();
-                stdoutData += out;
-                if (progressCallback) {
-                    const match = out.match(/(\d+\.\d+)%/);
-                    if (match) progressCallback(parseFloat(match[1]) / 100, 'Downloading...', stdoutData);
-                }
-            });
-        }
-
-        if (subprocess.stderr) {
-            subprocess.stderr.on('data', (data) => {
-                stderrData += data.toString();
-            });
-        }
-
-        await subprocess;
-
-        console.log(`[YTDLP] Done. Checking /tmp...`);
-
-        const files = await fs.readdir(TEMP_DIR);
-        const videoFile = files.find(f => f.includes(fileId));
-
-        if (!videoFile) {
-            throw new Error(`File not found. Stdout: ${stdoutData.slice(-100)} | Stderr: ${stderrData.slice(-100)}`);
-        }
-
-        const filePath = path.join(TEMP_DIR, videoFile);
-        const fileContent = await fs.readFile(filePath);
-
-        const storagePath = `downloads/${videoFile}`;
-        const { error } = await supabase.storage.from(BUCKET_NAME).upload(storagePath, fileContent, {
-            contentType: 'video/mp4',
-            upsert: true
+        process.stdout.on('data', (data) => {
+            const out = data.toString();
+            stdoutData += out;
+            if (progressCallback) {
+                const match = out.match(/(\d+\.\d+)%/);
+                if (match) progressCallback(parseFloat(match[1]) / 100, 'Downloading...', stdoutData);
+            }
         });
 
-        if (error) throw error;
-        await fs.unlink(filePath).catch(() => {});
+        process.stderr.on('data', (data) => {
+            stderrData += data.toString();
+        });
 
-        return { storagePath, title: videoFile, log: stdoutData };
+        process.on('close', async (code) => {
+            if (code !== 0) {
+                return reject(new Error(`yt-dlp exited with code ${code}. Stderr: ${stderrData}`));
+            }
 
-    } catch (error) {
-        console.error(`[YTDLP] Error:`, error);
-        throw error;
-    }
+            try {
+                console.log(`[YTDLP] Done. Checking /tmp...`);
+                const files = await fs.readdir(TEMP_DIR);
+                const videoFile = files.find(f => f.includes(fileId));
+
+                if (!videoFile) {
+                    throw new Error(`File not found in ${TEMP_DIR}. Stdout: ${stdoutData.slice(-100)}`);
+                }
+
+                const filePath = path.join(TEMP_DIR, videoFile);
+                const fileContent = await fs.readFile(filePath);
+
+                const storagePath = `downloads/${videoFile}`;
+                const { error } = await supabase.storage.from(BUCKET_NAME).upload(storagePath, fileContent, {
+                    contentType: 'video/mp4',
+                    upsert: true
+                });
+
+                if (error) throw error;
+                await fs.unlink(filePath).catch(() => {});
+
+                resolve({ storagePath, title: videoFile, log: stdoutData });
+            } catch (err) {
+                reject(err);
+            }
+        });
+
+        process.on('error', (err) => {
+            reject(new Error(`Failed to start yt-dlp: ${err.message}`));
+        });
+    });
 }
 
 export async function cleanupOldFiles() {
