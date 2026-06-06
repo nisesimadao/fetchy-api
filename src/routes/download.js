@@ -1,7 +1,6 @@
 import express from 'express';
 import { addDownloadJob, getJobStatus } from '../workers/downloadWorker.js';
-import { promises as fs } from 'fs';
-import path from 'path';
+import { supabase, BUCKET_NAME } from '../utils/supabase.js';
 
 const router = express.Router();
 
@@ -36,9 +35,10 @@ router.post('/download', async (req, res) => {
  * GET /api/status/:jobId
  * Get download job status
  */
-router.get('/status/:jobId', (req, res) => {
+router.get('/status/:jobId', async (req, res) => {
   const { jobId } = req.params;
-  const status = getJobStatus(jobId);
+  const status = await getJobStatus(jobId);
+  
   if (status.status === 'not_found') {
     console.warn(`[API] GET /status/${jobId}: Job not found.`);
     return res.status(404).json({ error: 'Job not found' });
@@ -47,13 +47,13 @@ router.get('/status/:jobId', (req, res) => {
   const response = {
     status: status.status,
     progress: status.progress,
-    message: status.message
+    message: status.message,
+    title: status.title
   };
 
   // Include download URL if completed
-  if (status.status === 'completed' && status.filePath) {
+  if (status.status === 'completed' && status.file_path) {
     response.downloadUrl = `/api/download/${jobId}`;
-    response.title = status.title;
   }
 
   res.json(response);
@@ -61,30 +61,28 @@ router.get('/status/:jobId', (req, res) => {
 
 /**
  * GET /api/download/:jobId
- * Download completed file
+ * Redirect to signed download URL from Supabase
  */
 router.get('/download/:jobId', async (req, res) => {
   try {
     const { jobId } = req.params;
-    const status = getJobStatus(jobId);
+    const status = await getJobStatus(jobId);
 
-    if (status.status !== 'completed' || !status.filePath) {
+    if (status.status !== 'completed' || !status.file_path) {
       return res.status(404).json({ error: 'File not ready or not found' });
     }
 
-    // Check if file exists
-    try {
-      await fs.access(status.filePath);
-    } catch {
-      return res.status(404).json({ error: 'File not found on disk' });
-    }
+    // Generate signed URL for download (valid for 1 hour)
+    const { data, error } = await supabase.storage
+      .from(BUCKET_NAME)
+      .createSignedUrl(status.file_path, 3600, {
+        download: status.title || true
+      });
 
-    // Stream file to client
-    res.download(status.filePath, status.title, (err) => {
-      if (err) {
-        console.error('[API] Download stream error:', err);
-      }
-    });
+    if (error) throw error;
+
+    // Redirect user to the signed URL
+    res.redirect(data.signedUrl);
   } catch (error) {
     console.error('[API] File download error:', error);
     res.status(500).json({ error: error.message });
@@ -93,11 +91,11 @@ router.get('/download/:jobId', async (req, res) => {
 
 /**
  * GET /api/log/:jobId
- * Get raw download log
+ * Get raw download log from Supabase
  */
-router.get('/log/:jobId', (req, res) => {
+router.get('/log/:jobId', async (req, res) => {
   const { jobId } = req.params;
-  const status = getJobStatus(jobId);
+  const status = await getJobStatus(jobId);
 
   if (status.status === 'not_found') {
     return res.status(404).json({ error: 'Job not found' });

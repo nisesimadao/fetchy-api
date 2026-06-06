@@ -1,30 +1,45 @@
-# Fetchy API - Railway Backend
+# Fetchy API - Vercel & Supabase Backend
 
-Video download API for Fetchy iOS app using yt-dlp.
+Video download API for Fetchy iOS app using yt-dlp, migrated to Vercel and Supabase.
+
+## Architecture
+
+- **Vercel**: Handles API requests and `yt-dlp` execution (Node.js).
+- **Supabase Database**: Stores job status and logs.
+- **Supabase Storage**: Stores downloaded video files.
 
 ## Setup
 
+1. **Supabase Setup**:
+   - Create a new project on [Supabase](https://supabase.com/).
+   - Create a table named `jobs` with the following columns:
+     - `id`: int8 (Identity)
+     - `status`: text
+     - `progress`: float8
+     - `message`: text
+     - `title`: text
+     - `file_path`: text
+     - `log`: text
+     - `url`: text
+     - `created_at`: timestamptz (default: now())
+   - Create a storage bucket named `downloads` (set it to public or private as needed).
+
+2. **Environment Variables**:
+   Copy `.env.example` to `.env` and fill in your Supabase credentials.
+
+3. **Install Dependencies**:
 ```bash
 npm install
 ```
 
-## Development
+## Deployment to Vercel
 
-```bash
-npm run dev
-```
-
-## Production
-
-```bash
-npm start
-```
-
-## Environment Variables
-
-- `PORT`: Server port (default: 3000)
-- `REDIS_URL`: Redis connection URL (Railway provides this automatically)
-- `NODE_ENV`: Environment (production/development)
+1. Install Vercel CLI: `npm i -g vercel`
+2. Deploy: `vercel`
+3. Add Environment Variables in Vercel Dashboard:
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `SUPABASE_BUCKET_NAME` (optional, defaults to `downloads`)
 
 ## API Endpoints
 
@@ -39,49 +54,11 @@ Start a download job.
 }
 ```
 
-**Response:**
-```json
-{
-  "jobId": "uuid",
-  "status": "queued"
-}
-```
-
 ### GET /api/status/:jobId
 Get job status and progress.
 
-**Response:**
-```json
-{
-  "status": "downloading",
-  "progress": 0.75,
-  "message": "Fetching...",
-  "downloadUrl": "/api/download/:jobId"
-}
-```
-
 ### GET /api/download/:jobId
-Download the completed file.
+Redirects to a signed URL for the completed file.
 
 ### GET /api/log/:jobId
 Get raw yt-dlp log output.
-
-## Railway Deployment
-
-1. Install Railway CLI:
-```bash
-npm install -g @railway/cli
-```
-
-2. Login and initialize:
-```bash
-railway login
-railway init
-```
-
-3. Add Redis service in Railway dashboard
-
-4. Deploy:
-```bash
-railway up
-```

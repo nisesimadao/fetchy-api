@@ -1,153 +1,111 @@
-import { spawn, spawnSync } from 'child_process';
+import { createcore } from 'youtube-dl-exec';
 import { promises as fs } from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { tmpdir } from 'os';
+import { supabase, BUCKET_NAME } from './supabase.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const ytdlp = createcore();
 
 // Use system temp directory
 const TEMP_DIR = path.join(tmpdir(), 'fetchy-downloads');
-console.log(`[YTDLP] Temp directory: ${TEMP_DIR}`);
 
 // Ensure temp directory exists
-await fs.mkdir(TEMP_DIR, { recursive: true }).catch((err) => {
-    console.error(`[YTDLP] Failed to create temp dir: ${err.message}`);
-});
-
-const VERSION = '1.0.4';
+const ensureDir = async () => {
+    try {
+        await fs.mkdir(TEMP_DIR, { recursive: true });
+    } catch (err) {
+        if (err.code !== 'EEXIST') throw err;
+    }
+};
 
 /**
- * Download video using yt-dlp binary directly
+ * Download video and upload to Supabase Storage
  * @param {string} url - Video URL
  */
 export async function downloadVideo(url, quality = '1080p', progressCallback) {
-    console.log(`[YTDLP] v${VERSION} Starting download: ${url}, quality: ${quality}`);
+    await ensureDir();
+    console.log(`[YTDLP] Starting download: ${url}, quality: ${quality}`);
 
-    const outputTemplate = path.join(TEMP_DIR, '%(id)s.%(ext)s');
-    let rawLog = '';
+    const fileId = `${Date.now()}`;
+    const outputTemplate = path.join(TEMP_DIR, `${fileId}.%(ext)s`);
+    
+    try {
+        // 1. Download to /tmp
+        const args = {
+            output: outputTemplate,
+            format: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            mergeOutputFormat: 'mp4',
+            noPlaylist: true,
+            newline: true,
+            progress: true,
+            noCheckCertificates: true,
+            youtubeSkipDashManifest: true,
+            referer: 'https://www.youtube.com/embed/',
+        };
 
-    return new Promise((resolve, reject) => {
-        const args = [
-            url,
-            '-o', outputTemplate,
-            '--format', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            '--merge-output-format', 'mp4',
-            '--no-playlist',
-            '--newline',
-            '--progress',
-            '--no-check-certificates',
-            '--youtube-skip-dash-manifest',
-            '--referer', 'https://www.youtube.com/embed/',
-            '--extractor-args', 'youtube:player-client=tv,mweb;player-skip=web,android,ios'
-        ];
+        console.log(`[YTDLP] Running download for ${url}`);
+        
+        // Note: youtube-dl-exec doesn't easily expose stdout for progress in the simple way
+        // but we can use the promise/child process it returns.
+        const subprocess = ytdlp(url, args);
 
-        console.log(`[YTDLP] Spawning: yt-dlp ${args.join(' ')}`);
-
-        // Find node path to be sure
-        const nodePath = spawnSync('which', ['node']).stdout.toString().trim() || '/usr/bin/node';
-        console.log(`[YTDLP] Node path: ${nodePath}`);
-
-        const ytDlpProcess = spawn('yt-dlp', args, {
-            env: {
-                ...process.env,
-                PATH: `${process.env.PATH}:/usr/local/bin:/usr/bin:/bin`,
-                YTDLP_JS_RUNTIME: nodePath
-            }
-        });
-
-        ytDlpProcess.stdout.on('data', (data) => {
+        subprocess.stdout.on('data', (data) => {
             const output = data.toString();
-            rawLog += output;
-            console.log(`[YTDLP] stdout: ${output.trim()}`);
-
             if (progressCallback) {
                 const match = output.match(/(\d+\.\d+)%/);
                 if (match) {
                     const percent = parseFloat(match[1]);
-                    const status = getStatusFromLog(output);
-                    progressCallback(percent / 100, status, output);
+                    progressCallback(percent / 100, 'Downloading...', output);
                 }
             }
         });
 
-        ytDlpProcess.stderr.on('data', (data) => {
-            const output = data.toString();
-            rawLog += output;
-            console.error(`[YTDLP] stderr: ${output.trim()}`);
-        });
+        const result = await subprocess;
+        console.log(`[YTDLP] Download finished`);
 
-        ytDlpProcess.on('close', async (code) => {
-            console.log(`[YTDLP] Process exited with code ${code}`);
-            if (code === 0) {
-                try {
-                    // Find the newly created file in TEMP_DIR
-                    // Note: This relies on the output template using ID
-                    // A more robust way might be --get-filename first, but let's try this
-                    const files = await fs.readdir(TEMP_DIR);
-                    // Filter by mtime to get the latest file might be better
-                    // For now, look for any video file
-                    const videoFile = files.find(f => f.endsWith('.mp4') || f.endsWith('.mkv') || f.endsWith('.webm'));
+        // 2. Find the file
+        const files = await fs.readdir(TEMP_DIR);
+        const videoFile = files.find(f => f.startsWith(fileId));
 
-                    if (!videoFile) {
-                        return reject(new Error('Downloaded file not found on disk'));
-                    }
+        if (!videoFile) {
+            throw new Error('Downloaded file not found on disk');
+        }
 
-                    resolve({
-                        filePath: path.join(TEMP_DIR, videoFile),
-                        title: videoFile,
-                        log: rawLog
-                    });
-                } catch (err) {
-                    reject(err);
-                }
-            } else {
-                reject(new Error(`yt-dlp failed with code ${code}`));
-            }
-        });
+        const filePath = path.join(TEMP_DIR, videoFile);
+        const fileContent = await fs.readFile(filePath);
 
-        ytDlpProcess.on('error', (err) => {
-            console.error(`[YTDLP] Failed to start process:`, err);
-            reject(err);
-        });
-    });
-}
+        // 3. Upload to Supabase Storage
+        const storagePath = `downloads/${videoFile}`;
+        console.log(`[SUPABASE] Uploading to ${BUCKET_NAME}/${storagePath}`);
+        
+        const { data, error } = await supabase.storage
+            .from(BUCKET_NAME)
+            .upload(storagePath, fileContent, {
+                contentType: 'video/mp4',
+                upsert: true
+            });
 
-/**
- * Parse status from yt-dlp log output
- */
-function getStatusFromLog(log) {
-    const lower = log.toLowerCase();
-    if (lower.includes('extracting') || lower.includes('webpage')) {
-        return 'Analyzing...';
-    } else if (lower.includes('merging')) {
-        return 'Merging...';
-    } else if (lower.includes('downloading')) {
-        return 'Fetching...';
+        if (error) throw error;
+
+        // 4. Cleanup local file
+        await fs.unlink(filePath).catch(err => console.error(`[CLEANUP] Failed to delete temp file: ${err.message}`));
+
+        return {
+            storagePath,
+            title: videoFile,
+            log: 'Download and upload completed successfully'
+        };
+
+    } catch (error) {
+        console.error(`[YTDLP] Error:`, error);
+        throw error;
     }
-    return 'Processing...';
 }
 
 /**
- * Clean up old files (older than 1 hour)
+ * Placeholder for cleanup - in Vercel, /tmp is ephemeral, 
+ * but we might want to clean up Supabase storage eventually.
  */
 export async function cleanupOldFiles() {
-    try {
-        const files = await fs.readdir(TEMP_DIR);
-        const now = Date.now();
-        const ONE_HOUR = 60 * 60 * 1000;
-
-        for (const file of files) {
-            const filePath = path.join(TEMP_DIR, file);
-            const stats = await fs.stat(filePath);
-
-            if (now - stats.mtimeMs > ONE_HOUR) {
-                await fs.unlink(filePath);
-                console.log(`[CLEANUP] Deleted old file: ${file}`);
-            }
-        }
-    } catch (error) {
-        console.error('[CLEANUP] Error:', error);
-    }
+    console.log('[CLEANUP] Supabase storage cleanup should be handled by a scheduled job or TTL policy.');
 }
