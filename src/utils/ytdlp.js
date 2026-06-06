@@ -33,16 +33,16 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
             referer: 'https://www.youtube.com/embed/',
         };
 
-        console.log(`[YTDLP] Spawning process...`);
+        console.log(`[YTDLP] Spawning process with youtube-dl-exec...`);
         
-        // Use the library's built-in execution
-        // We'll use the promise-based API and catch errors explicitly
-        const ytdlpProcess = create();
+        // Use default create() without arguments for better compatibility
+        const ytdlp = create();
         
         let stdoutData = '';
         let stderrData = '';
 
-        const subprocess = ytdlpProcess(url, args);
+        // Trigger execution
+        const subprocess = ytdlp(url, args);
 
         if (subprocess.stdout) {
             subprocess.stdout.on('data', (data) => {
@@ -61,12 +61,7 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
             });
         }
 
-        try {
-            await subprocess;
-        } catch (execError) {
-            console.error(`[YTDLP EXEC ERROR]`, execError);
-            throw new Error(`yt-dlp failed: ${execError.message}. Stderr: ${stderrData}`);
-        }
+        await subprocess;
 
         console.log(`[YTDLP] Done. Checking /tmp...`);
 
@@ -74,7 +69,7 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
         const videoFile = files.find(f => f.includes(fileId));
 
         if (!videoFile) {
-            throw new Error(`File not found. Stdout: ${stdoutData.slice(-200)} | Stderr: ${stderrData.slice(-200)}`);
+            throw new Error(`File not found. Stdout: ${stdoutData.slice(-100)} | Stderr: ${stderrData.slice(-100)}`);
         }
 
         const filePath = path.join(TEMP_DIR, videoFile);
@@ -92,7 +87,7 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
         return { storagePath, title: videoFile, log: stdoutData };
 
     } catch (error) {
-        console.error(`[YTDLP] Fatal:`, error);
+        console.error(`[YTDLP] Error:`, error);
         throw error;
     }
 }
