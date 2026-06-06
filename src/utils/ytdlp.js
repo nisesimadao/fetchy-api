@@ -1,10 +1,11 @@
-import { createcore } from 'youtube-dl-exec';
+import { create } from 'youtube-dl-exec';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { tmpdir } from 'os';
 import { supabase, BUCKET_NAME } from './supabase.js';
 
-const ytdlp = createcore();
+// Vercelなどの環境で動作するように設定
+const ytdlp = create(path.join(tmpdir(), 'yt-dlp'));
 
 // Use system temp directory
 const TEMP_DIR = path.join(tmpdir(), 'fetchy-downloads');
@@ -45,22 +46,24 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
 
         console.log(`[YTDLP] Running download for ${url}`);
         
-        // Note: youtube-dl-exec doesn't easily expose stdout for progress in the simple way
-        // but we can use the promise/child process it returns.
-        const subprocess = ytdlp(url, args);
+        // youtube-dl-exec の実行
+        // create() で作成したインスタンスを関数として呼び出す
+        const subprocess = create(path.join(tmpdir(), 'yt-dlp'))(url, args);
 
-        subprocess.stdout.on('data', (data) => {
-            const output = data.toString();
-            if (progressCallback) {
-                const match = output.match(/(\d+\.\d+)%/);
-                if (match) {
-                    const percent = parseFloat(match[1]);
-                    progressCallback(percent / 100, 'Downloading...', output);
+        if (subprocess.stdout) {
+            subprocess.stdout.on('data', (data) => {
+                const output = data.toString();
+                if (progressCallback) {
+                    const match = output.match(/(\d+\.\d+)%/);
+                    if (match) {
+                        const percent = parseFloat(match[1]);
+                        progressCallback(percent / 100, 'Downloading...', output);
+                    }
                 }
-            }
-        });
+            });
+        }
 
-        const result = await subprocess;
+        await subprocess;
         console.log(`[YTDLP] Download finished`);
 
         // 2. Find the file
@@ -103,8 +106,7 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
 }
 
 /**
- * Placeholder for cleanup - in Vercel, /tmp is ephemeral, 
- * but we might want to clean up Supabase storage eventually.
+ * Placeholder for cleanup
  */
 export async function cleanupOldFiles() {
     console.log('[CLEANUP] Supabase storage cleanup should be handled by a scheduled job or TTL policy.');
