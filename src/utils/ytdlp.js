@@ -4,9 +4,6 @@ import path from 'path';
 import { tmpdir } from 'os';
 import { supabase, BUCKET_NAME } from './supabase.js';
 
-// Vercelなどの環境で動作するように設定
-const ytdlp = create(path.join(tmpdir(), 'yt-dlp'));
-
 // Use system temp directory
 const TEMP_DIR = path.join(tmpdir(), 'fetchy-downloads');
 
@@ -27,11 +24,11 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
     await ensureDir();
     console.log(`[YTDLP] Starting download: ${url}, quality: ${quality}`);
 
-    const fileId = `${Date.now()}`;
+    const fileId = `vid_${Date.now()}`;
+    // Vercel handles /tmp better without subdirectories sometimes, but let's stick to absolute path
     const outputTemplate = path.join(TEMP_DIR, `${fileId}.%(ext)s`);
     
     try {
-        // 1. Download to /tmp
         const args = {
             output: outputTemplate,
             format: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
@@ -44,37 +41,51 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
             referer: 'https://www.youtube.com/embed/',
         };
 
-        console.log(`[YTDLP] Running download for ${url}`);
+        console.log(`[YTDLP] Running download for ${url} with output ${outputTemplate}`);
         
-        // youtube-dl-exec の実行
-        // create() で作成したインスタンスを関数として呼び出す
-        const subprocess = create(path.join(tmpdir(), 'yt-dlp'))(url, args);
+        // youtube-dl-exec automatically handles binary downloading/location
+        const subprocess = create()(url, args);
+
+        let fullLog = '';
 
         if (subprocess.stdout) {
             subprocess.stdout.on('data', (data) => {
                 const output = data.toString();
+                fullLog += output;
+                console.log(`[YTDLP] ${output.trim()}`);
                 if (progressCallback) {
                     const match = output.match(/(\d+\.\d+)%/);
                     if (match) {
                         const percent = parseFloat(match[1]);
-                        progressCallback(percent / 100, 'Downloading...', output);
+                        progressCallback(percent / 100, 'Downloading...', fullLog);
                     }
                 }
             });
         }
 
+        if (subprocess.stderr) {
+            subprocess.stderr.on('data', (data) => {
+                fullLog += data.toString();
+                console.error(`[YTDLP ERROR] ${data.toString().trim()}`);
+            });
+        }
+
         await subprocess;
-        console.log(`[YTDLP] Download finished`);
+        console.log(`[YTDLP] Process finished. Searching for file with ID: ${fileId}`);
 
         // 2. Find the file
+        // Sometimes yt-dlp might not follow the template exactly if merging fails
         const files = await fs.readdir(TEMP_DIR);
-        const videoFile = files.find(f => f.startsWith(fileId));
+        console.log(`[YTDLP] Files in temp dir: ${files.join(', ')}`);
+        
+        const videoFile = files.find(f => f.includes(fileId));
 
         if (!videoFile) {
-            throw new Error('Downloaded file not found on disk');
+            throw new Error(`Downloaded file not found on disk. Log: ${fullLog.slice(-500)}`);
         }
 
         const filePath = path.join(TEMP_DIR, videoFile);
+        console.log(`[YTDLP] Found file: ${filePath}`);
         const fileContent = await fs.readFile(filePath);
 
         // 3. Upload to Supabase Storage
@@ -96,7 +107,7 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
         return {
             storagePath,
             title: videoFile,
-            log: 'Download and upload completed successfully'
+            log: fullLog
         };
 
     } catch (error) {
