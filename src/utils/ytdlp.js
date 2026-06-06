@@ -2,12 +2,11 @@ import { create } from 'youtube-dl-exec';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { tmpdir } from 'os';
+import ffmpeg from 'ffmpeg-static';
 import { supabase, BUCKET_NAME } from './supabase.js';
 
-// Use system temp directory
 const TEMP_DIR = path.join(tmpdir(), 'fetchy-downloads');
 
-// Ensure temp directory exists
 const ensureDir = async () => {
     try {
         await fs.mkdir(TEMP_DIR, { recursive: true });
@@ -16,16 +15,11 @@ const ensureDir = async () => {
     }
 };
 
-/**
- * Download video and upload to Supabase Storage
- * @param {string} url - Video URL
- */
 export async function downloadVideo(url, quality = '1080p', progressCallback) {
     await ensureDir();
-    console.log(`[YTDLP] Starting download: ${url}, quality: ${quality}`);
+    console.log(`[YTDLP] URL: ${url}`);
 
     const fileId = `vid_${Date.now()}`;
-    // Vercel handles /tmp better without subdirectories sometimes, but let's stick to absolute path
     const outputTemplate = path.join(TEMP_DIR, `${fileId}.%(ext)s`);
     
     try {
@@ -34,91 +28,75 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
             format: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
             mergeOutputFormat: 'mp4',
             noPlaylist: true,
-            newline: true,
-            progress: true,
             noCheckCertificates: true,
-            youtubeSkipDashManifest: true,
+            ffmpegLocation: ffmpeg,
             referer: 'https://www.youtube.com/embed/',
         };
 
-        console.log(`[YTDLP] Running download for ${url} with output ${outputTemplate}`);
+        console.log(`[YTDLP] Spawning process...`);
         
-        // youtube-dl-exec automatically handles binary downloading/location
-        const subprocess = create()(url, args);
+        // Use the library's built-in execution
+        // We'll use the promise-based API and catch errors explicitly
+        const ytdlpProcess = create();
+        
+        let stdoutData = '';
+        let stderrData = '';
 
-        let fullLog = '';
+        const subprocess = ytdlpProcess(url, args);
 
         if (subprocess.stdout) {
             subprocess.stdout.on('data', (data) => {
-                const output = data.toString();
-                fullLog += output;
-                console.log(`[YTDLP] ${output.trim()}`);
+                const out = data.toString();
+                stdoutData += out;
                 if (progressCallback) {
-                    const match = output.match(/(\d+\.\d+)%/);
-                    if (match) {
-                        const percent = parseFloat(match[1]);
-                        progressCallback(percent / 100, 'Downloading...', fullLog);
-                    }
+                    const match = out.match(/(\d+\.\d+)%/);
+                    if (match) progressCallback(parseFloat(match[1]) / 100, 'Downloading...', stdoutData);
                 }
             });
         }
 
         if (subprocess.stderr) {
             subprocess.stderr.on('data', (data) => {
-                fullLog += data.toString();
-                console.error(`[YTDLP ERROR] ${data.toString().trim()}`);
+                stderrData += data.toString();
             });
         }
 
-        await subprocess;
-        console.log(`[YTDLP] Process finished. Searching for file with ID: ${fileId}`);
+        try {
+            await subprocess;
+        } catch (execError) {
+            console.error(`[YTDLP EXEC ERROR]`, execError);
+            throw new Error(`yt-dlp failed: ${execError.message}. Stderr: ${stderrData}`);
+        }
 
-        // 2. Find the file
-        // Sometimes yt-dlp might not follow the template exactly if merging fails
+        console.log(`[YTDLP] Done. Checking /tmp...`);
+
         const files = await fs.readdir(TEMP_DIR);
-        console.log(`[YTDLP] Files in temp dir: ${files.join(', ')}`);
-        
         const videoFile = files.find(f => f.includes(fileId));
 
         if (!videoFile) {
-            throw new Error(`Downloaded file not found on disk. Log: ${fullLog.slice(-500)}`);
+            throw new Error(`File not found. Stdout: ${stdoutData.slice(-200)} | Stderr: ${stderrData.slice(-200)}`);
         }
 
         const filePath = path.join(TEMP_DIR, videoFile);
-        console.log(`[YTDLP] Found file: ${filePath}`);
         const fileContent = await fs.readFile(filePath);
 
-        // 3. Upload to Supabase Storage
         const storagePath = `downloads/${videoFile}`;
-        console.log(`[SUPABASE] Uploading to ${BUCKET_NAME}/${storagePath}`);
-        
-        const { data, error } = await supabase.storage
-            .from(BUCKET_NAME)
-            .upload(storagePath, fileContent, {
-                contentType: 'video/mp4',
-                upsert: true
-            });
+        const { error } = await supabase.storage.from(BUCKET_NAME).upload(storagePath, fileContent, {
+            contentType: 'video/mp4',
+            upsert: true
+        });
 
         if (error) throw error;
+        await fs.unlink(filePath).catch(() => {});
 
-        // 4. Cleanup local file
-        await fs.unlink(filePath).catch(err => console.error(`[CLEANUP] Failed to delete temp file: ${err.message}`));
-
-        return {
-            storagePath,
-            title: videoFile,
-            log: fullLog
-        };
+        return { storagePath, title: videoFile, log: stdoutData };
 
     } catch (error) {
-        console.error(`[YTDLP] Error:`, error);
+        console.error(`[YTDLP] Fatal:`, error);
         throw error;
     }
 }
 
-/**
- * Placeholder for cleanup
- */
 export async function cleanupOldFiles() {
-    console.log('[CLEANUP] Supabase storage cleanup should be handled by a scheduled job or TTL policy.');
+    console.log('[CLEANUP] Managed by Supabase.');
 }
