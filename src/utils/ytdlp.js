@@ -36,7 +36,7 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
             '--progress',
             '--referer', 'https://www.youtube.com/embed/',
             '--user-agent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-            '--extractor-args', 'youtube:player-client=ios,android,mweb;player-skip=web',
+            '--extractor-args', 'youtube:player-client=android_tv_embedded,ios,mweb;player-skip=web,tv',
             '--js-runtime', 'node'
         ];
 
