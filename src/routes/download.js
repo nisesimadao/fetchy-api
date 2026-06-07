@@ -1,11 +1,11 @@
 import express from 'express';
 import { addDownloadJob, getJobStatus, processDownload } from '../workers/downloadWorker.js';
+import axios from 'axios';
 
 const router = express.Router();
 
 /**
  * POST /api/download
- * Start a new download job (Synchronous on Vercel)
  */
 router.post('/download', async (req, res) => {
   console.log(`[API] POST /download - URL: ${req.body.url}`);
@@ -17,18 +17,14 @@ router.post('/download', async (req, res) => {
       return res.status(400).json({ error: 'URL is required' });
     }
 
-    // 1. Create the job entry first
     const jobId = await addDownloadJob(url, quality);
     console.log(`[API] Job created: ${jobId}. Starting synchronous processing...`);
 
-    // 2. WAIT for the download to complete (Crucial for Vercel)
-    // This will run for up to 60s (maxDuration set in vercel.json)
     await processDownload(jobId, url, quality);
 
-    // 3. Respond once finished
     res.json({
       jobId: String(jobId),
-      status: 'completed' // In this sync mode, it will return only when completed
+      status: 'completed'
     });
   } catch (error) {
     console.error('[API] Download error:', error);
@@ -38,14 +34,12 @@ router.post('/download', async (req, res) => {
 
 /**
  * GET /api/status/:jobId
- * Get download job status
  */
 router.get('/status/:jobId', async (req, res) => {
   const { jobId } = req.params;
   const status = await getJobStatus(jobId);
   
   if (status.status === 'not_found') {
-    console.warn(`[API] GET /status/${jobId}: Job not found.`);
     return res.status(404).json({ error: 'Job not found' });
   }
 
@@ -65,7 +59,7 @@ router.get('/status/:jobId', async (req, res) => {
 
 /**
  * GET /api/download/:jobId
- * Redirect to signed download URL from Supabase
+ * Proxy the file from Supabase to keep headers clean for Swift client
  */
 router.get('/download/:jobId', async (req, res) => {
   try {
@@ -77,16 +71,31 @@ router.get('/download/:jobId', async (req, res) => {
       return res.status(404).json({ error: 'File not ready or not found' });
     }
 
+    // Get signed URL
     const { data, error } = await supabase.storage
       .from(BUCKET_NAME)
-      .createSignedUrl(status.file_path, 3600, {
-        download: status.title || true
-      });
+      .createSignedUrl(status.file_path, 3600);
 
     if (error) throw error;
-    res.redirect(data.signedUrl);
+
+    // Stream the file from Supabase through Vercel to the client
+    // This ensures the client sees it as a direct download from our API
+    console.log(`[API] Proxying download from: ${data.signedUrl}`);
+    
+    const fileRes = await axios({
+      method: 'get',
+      url: data.signedUrl,
+      responseType: 'stream'
+    });
+
+    // Set appropriate headers for video preview
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(status.title || 'video.mp4')}"`);
+    
+    // Pipe the stream
+    fileRes.data.pipe(res);
   } catch (error) {
-    console.error('[API] File download error:', error);
+    console.error('[API] File download proxy error:', error);
     res.status(500).json({ error: error.message });
   }
 });
