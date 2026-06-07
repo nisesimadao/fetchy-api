@@ -24,6 +24,9 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
     const outputTemplate = path.join(TEMP_DIR, `${fileId}.%(ext)s`);
     
     return new Promise((resolve, reject) => {
+        const isTwitter = url.includes('twitter.com') || url.includes('x.com');
+        const referer = isTwitter ? 'https://x.com/' : 'https://www.youtube.com/embed/';
+
         const args = [
             url,
             '-o', outputTemplate,
@@ -34,7 +37,7 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
             '--ffmpeg-location', ffmpeg,
             '--newline',
             '--progress',
-            '--referer', 'https://www.youtube.com/embed/',
+            '--referer', referer,
             '--user-agent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
             '--extractor-args', 'youtube:player-client=android_tv_embedded,ios,mweb;player-skip=web,tv',
             '--js-runtime', 'node'
