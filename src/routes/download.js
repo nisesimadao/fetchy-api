@@ -89,22 +89,15 @@ router.get('/download/:jobId', async (req, res) => {
       return res.status(404).json({ error: 'File not ready or not found' });
     }
 
-    // Get signed URL and metadata to get file size
+    // Get signed URL
     const { data: urlData, error: urlError } = await supabase.storage
       .from(BUCKET_NAME)
       .createSignedUrl(status.file_path, 3600);
 
     if (urlError) throw urlError;
 
-    // Get file size from metadata
-    const { data: metaData, error: metaError } = await supabase.storage
-      .from(BUCKET_NAME)
-      .getMetadata(status.file_path);
-
-    const fileSize = metaData?.size;
-
     // Stream the file from Supabase through Vercel to the client
-    console.log(`[API] Proxying download (Size: ${fileSize}): ${urlData.signedUrl}`);
+    console.log(`[API] Proxying download: ${urlData.signedUrl}`);
     
     const fileRes = await axios({
       method: 'get',
@@ -112,10 +105,13 @@ router.get('/download/:jobId', async (req, res) => {
       responseType: 'stream'
     });
 
-    // Set appropriate headers for video preview and progress
-    res.setHeader('Content-Type', 'video/mp4');
-    if (fileSize) {
-      res.setHeader('Content-Length', fileSize);
+    // Copy essential headers from the source (Supabase) to our response
+    const contentType = fileRes.headers['content-type'] || 'video/mp4';
+    const contentLength = fileRes.headers['content-length'];
+
+    res.setHeader('Content-Type', contentType);
+    if (contentLength) {
+      res.setHeader('Content-Length', contentLength);
     }
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(status.title || 'video.mp4')}"`);
     
