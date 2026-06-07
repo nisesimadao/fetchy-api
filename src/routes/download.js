@@ -89,25 +89,34 @@ router.get('/download/:jobId', async (req, res) => {
       return res.status(404).json({ error: 'File not ready or not found' });
     }
 
-    // Get signed URL
-    const { data, error } = await supabase.storage
+    // Get signed URL and metadata to get file size
+    const { data: urlData, error: urlError } = await supabase.storage
       .from(BUCKET_NAME)
       .createSignedUrl(status.file_path, 3600);
 
-    if (error) throw error;
+    if (urlError) throw urlError;
+
+    // Get file size from metadata
+    const { data: metaData, error: metaError } = await supabase.storage
+      .from(BUCKET_NAME)
+      .getMetadata(status.file_path);
+
+    const fileSize = metaData?.size;
 
     // Stream the file from Supabase through Vercel to the client
-    // This ensures the client sees it as a direct download from our API
-    console.log(`[API] Proxying download from: ${data.signedUrl}`);
+    console.log(`[API] Proxying download (Size: ${fileSize}): ${urlData.signedUrl}`);
     
     const fileRes = await axios({
       method: 'get',
-      url: data.signedUrl,
+      url: urlData.signedUrl,
       responseType: 'stream'
     });
 
-    // Set appropriate headers for video preview
+    // Set appropriate headers for video preview and progress
     res.setHeader('Content-Type', 'video/mp4');
+    if (fileSize) {
+      res.setHeader('Content-Length', fileSize);
+    }
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(status.title || 'video.mp4')}"`);
     
     // Pipe the stream
