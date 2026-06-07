@@ -1,6 +1,5 @@
 import express from 'express';
 import { addDownloadJob, getJobStatus } from '../workers/downloadWorker.js';
-import { supabase, BUCKET_NAME } from '../utils/supabase.js';
 
 const router = express.Router();
 
@@ -21,8 +20,9 @@ router.post('/download', async (req, res) => {
     const jobId = await addDownloadJob(url, quality);
     console.log(`[API] Job created: ${jobId}`);
 
+    // Ensure jobId is a String for Swift compatibility
     res.json({
-      jobId,
+      jobId: String(jobId),
       status: 'queued'
     });
   } catch (error) {
@@ -44,16 +44,17 @@ router.get('/status/:jobId', async (req, res) => {
     return res.status(404).json({ error: 'Job not found' });
   }
 
+  // Strictly match original Railway response format
   const response = {
     status: status.status,
     progress: status.progress,
-    message: status.message,
-    title: status.title
+    message: status.message
   };
 
-  // Include download URL if completed
+  // Include download URL and title ONLY if completed
   if (status.status === 'completed' && status.file_path) {
     response.downloadUrl = `/api/download/${jobId}`;
+    response.title = status.title;
   }
 
   res.json(response);
@@ -66,13 +67,13 @@ router.get('/status/:jobId', async (req, res) => {
 router.get('/download/:jobId', async (req, res) => {
   try {
     const { jobId } = req.params;
+    const { supabase, BUCKET_NAME } = await import('../utils/supabase.js'); // Lazy load
     const status = await getJobStatus(jobId);
 
     if (status.status !== 'completed' || !status.file_path) {
       return res.status(404).json({ error: 'File not ready or not found' });
     }
 
-    // Generate signed URL for download (valid for 1 hour)
     const { data, error } = await supabase.storage
       .from(BUCKET_NAME)
       .createSignedUrl(status.file_path, 3600, {
@@ -80,8 +81,6 @@ router.get('/download/:jobId', async (req, res) => {
       });
 
     if (error) throw error;
-
-    // Redirect user to the signed URL
     res.redirect(data.signedUrl);
   } catch (error) {
     console.error('[API] File download error:', error);
@@ -91,7 +90,6 @@ router.get('/download/:jobId', async (req, res) => {
 
 /**
  * GET /api/log/:jobId
- * Get raw download log from Supabase
  */
 router.get('/log/:jobId', async (req, res) => {
   const { jobId } = req.params;
