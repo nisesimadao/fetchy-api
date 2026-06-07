@@ -20,10 +20,7 @@ export async function addDownloadJob(url, quality = '1080p') {
     
     const jobId = data.id;
 
-    // In Vercel, we can't truly run in background after response is sent 
-    // without using Vercel Functions or Edge Functions properly.
-    // However, for this implementation, we start it and hope it finishes
-    // before the function timeout.
+    // Start download in background
     processDownload(jobId, url, quality);
 
     return jobId;
@@ -44,10 +41,14 @@ export async function getJobStatus(jobId) {
 }
 
 /**
- * Process download and update Supabase
+ * Process download and update Supabase with throttling
  */
 async function processDownload(jobId, url, quality) {
     console.log(`[WORKER] Starting job ${jobId} for ${url}`);
+    
+    let lastUpdate = 0;
+    const THROTTLE_MS = 2000; // Update Supabase every 2 seconds max
+
     try {
         // Update status to downloading
         await supabase
@@ -59,21 +60,32 @@ async function processDownload(jobId, url, quality) {
             .eq('id', jobId);
 
         // Download video with progress tracking
-        const result = await downloadVideo(url, quality, async (progress, status, log) => {
-            // Throttling updates might be good, but for now update every time
-            await supabase
-                .from('jobs')
-                .update({
-                    progress,
-                    message: status,
-                    log
-                })
-                .eq('id', jobId);
+        const result = await downloadVideo(url, quality, (progress, status, logChunk) => {
+            const now = Date.now();
+            
+            // Only update if progress changed significantly or enough time passed
+            if (now - lastUpdate > THROTTLE_MS || progress === 1) {
+                lastUpdate = now;
+                
+                const updateData = { message: status };
+                if (progress !== null) updateData.progress = progress;
+                
+                // We don't update the full log here to save bandwidth/rate limits
+                // but we could update a small portion if needed.
+                
+                supabase
+                    .from('jobs')
+                    .update(updateData)
+                    .eq('id', jobId)
+                    .then(({ error }) => {
+                        if (error) console.error(`[WORKER] Throttled update error:`, error);
+                    });
+            }
         });
 
         console.log(`[WORKER] Job ${jobId} completed successfully`);
 
-        // Update to completed
+        // Update to completed (final update, no throttle)
         await supabase
             .from('jobs')
             .update({
@@ -82,7 +94,7 @@ async function processDownload(jobId, url, quality) {
                 message: 'Download complete',
                 file_path: result.storagePath,
                 title: result.title,
-                log: result.log
+                log: result.log.slice(-5000) // Keep only last 5KB of log
             })
             .eq('id', jobId);
 

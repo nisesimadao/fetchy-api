@@ -46,17 +46,38 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
         let stdoutData = '';
         let stderrData = '';
 
-        process.stdout.on('data', (data) => {
+        const handleOutput = (data) => {
             const out = data.toString();
             stdoutData += out;
+            
             if (progressCallback) {
-                const match = out.match(/(\d+\.\d+)%/);
-                if (match) progressCallback(parseFloat(match[1]) / 100, 'Downloading...', stdoutData);
-            }
-        });
+                // Better regex to catch 0%, 0.1%, 100% etc.
+                const match = out.match(/(\d+(\.\d+)?)%/);
+                let status = 'Downloading...';
+                
+                if (out.toLowerCase().includes('merging')) {
+                    status = 'Merging...';
+                } else if (out.toLowerCase().includes('extracting')) {
+                    status = 'Analyzing...';
+                }
 
+                if (match) {
+                    const progress = parseFloat(match[1]) / 100;
+                    progressCallback(progress, status, out);
+                } else if (out.trim()) {
+                    // Even if no % match, update status if text changed
+                    progressCallback(null, status, out);
+                }
+            }
+        };
+
+        process.stdout.on('data', handleOutput);
         process.stderr.on('data', (data) => {
-            stderrData += data.toString();
+            const err = data.toString();
+            stderrData += err;
+            console.error(`[YTDLP STDERR] ${err.trim()}`);
+            // Sometimes progress/status is in stderr
+            handleOutput(data);
         });
 
         process.on('close', async (code) => {
