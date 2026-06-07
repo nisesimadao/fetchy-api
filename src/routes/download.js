@@ -6,18 +6,36 @@ const router = express.Router();
 
 /**
  * POST /api/download
- */
-router.post('/download', async (req, res) => {
-  console.log(`[API] POST /download - URL: ${req.body.url}`);
-  try {
-    const { url, quality = '1080p' } = req.body;
+ router.post('/download', async (req, res) => {
+   console.log(`[API] POST /download - URL: ${req.body.url}`);
+   try {
+     const { url, quality = '1080p' } = req.body;
 
-    if (!url) {
-      console.error('[API] Download error: URL is required for POST /download');
-      return res.status(400).json({ error: 'URL is required' });
-    }
+     if (!url) {
+       console.error('[API] Download error: URL is required for POST /download');
+       return res.status(400).json({ error: 'URL is required' });
+     }
 
-    const jobId = await addDownloadJob(url, quality);
+     // 1. Check for existing completed job with the same URL
+     const { data: existingJob } = await (await import('../utils/supabase.js')).supabase
+       .from('jobs')
+       .select('id, status')
+       .eq('url', url)
+       .eq('status', 'completed')
+       .order('created_at', { ascending: false })
+       .limit(1)
+       .single();
+
+     if (existingJob) {
+       console.log(`[API] Found existing completed job: ${existingJob.id}. Reusing.`);
+       return res.json({
+         jobId: String(existingJob.id),
+         status: 'completed'
+       });
+     }
+
+     // 2. Create the job entry first if no cache found
+     const jobId = await addDownloadJob(url, quality);
     console.log(`[API] Job created: ${jobId}. Starting synchronous processing...`);
 
     await processDownload(jobId, url, quality);
