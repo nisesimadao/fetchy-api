@@ -1,11 +1,11 @@
 import express from 'express';
-import { addDownloadJob, getJobStatus } from '../workers/downloadWorker.js';
+import { addDownloadJob, getJobStatus, processDownload } from '../workers/downloadWorker.js';
 
 const router = express.Router();
 
 /**
  * POST /api/download
- * Start a new download job
+ * Start a new download job (Synchronous on Vercel)
  */
 router.post('/download', async (req, res) => {
   console.log(`[API] POST /download - URL: ${req.body.url}`);
@@ -17,13 +17,18 @@ router.post('/download', async (req, res) => {
       return res.status(400).json({ error: 'URL is required' });
     }
 
+    // 1. Create the job entry first
     const jobId = await addDownloadJob(url, quality);
-    console.log(`[API] Job created: ${jobId}`);
+    console.log(`[API] Job created: ${jobId}. Starting synchronous processing...`);
 
-    // Ensure jobId is a String for Swift compatibility
+    // 2. WAIT for the download to complete (Crucial for Vercel)
+    // This will run for up to 60s (maxDuration set in vercel.json)
+    await processDownload(jobId, url, quality);
+
+    // 3. Respond once finished
     res.json({
       jobId: String(jobId),
-      status: 'queued'
+      status: 'completed' // In this sync mode, it will return only when completed
     });
   } catch (error) {
     console.error('[API] Download error:', error);
@@ -44,14 +49,12 @@ router.get('/status/:jobId', async (req, res) => {
     return res.status(404).json({ error: 'Job not found' });
   }
 
-  // Strictly match original Railway response format
   const response = {
     status: status.status,
     progress: status.progress,
     message: status.message
   };
 
-  // Include download URL and title ONLY if completed
   if (status.status === 'completed' && status.file_path) {
     response.downloadUrl = `/api/download/${jobId}`;
     response.title = status.title;
@@ -67,7 +70,7 @@ router.get('/status/:jobId', async (req, res) => {
 router.get('/download/:jobId', async (req, res) => {
   try {
     const { jobId } = req.params;
-    const { supabase, BUCKET_NAME } = await import('../utils/supabase.js'); // Lazy load
+    const { supabase, BUCKET_NAME } = await import('../utils/supabase.js');
     const status = await getJobStatus(jobId);
 
     if (status.status !== 'completed' || !status.file_path) {
@@ -88,9 +91,6 @@ router.get('/download/:jobId', async (req, res) => {
   }
 });
 
-/**
- * GET /api/log/:jobId
- */
 router.get('/log/:jobId', async (req, res) => {
   const { jobId } = req.params;
   const status = await getJobStatus(jobId);

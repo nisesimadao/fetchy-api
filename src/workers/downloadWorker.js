@@ -2,7 +2,7 @@ import { downloadVideo } from '../utils/ytdlp.js';
 import { supabase } from '../utils/supabase.js';
 
 /**
- * Add download job to Supabase
+ * Add download job to Supabase (Database only)
  */
 export async function addDownloadJob(url, quality = '1080p') {
     const { data, error } = await supabase
@@ -17,13 +17,7 @@ export async function addDownloadJob(url, quality = '1080p') {
         .single();
 
     if (error) throw error;
-    
-    const jobId = data.id;
-
-    // Start download in background
-    processDownload(jobId, url, quality);
-
-    return jobId;
+    return data.id;
 }
 
 /**
@@ -41,16 +35,16 @@ export async function getJobStatus(jobId) {
 }
 
 /**
- * Process download and update Supabase with throttling
+ * Process download and update Supabase
+ * Exported so it can be awaited by the route
  */
-async function processDownload(jobId, url, quality) {
+export async function processDownload(jobId, url, quality) {
     console.log(`[WORKER] Starting job ${jobId} for ${url}`);
     
     let lastUpdate = 0;
-    const THROTTLE_MS = 2000; // Update Supabase every 2 seconds max
+    const THROTTLE_MS = 2000;
 
     try {
-        // Update status to downloading
         await supabase
             .from('jobs')
             .update({
@@ -59,33 +53,25 @@ async function processDownload(jobId, url, quality) {
             })
             .eq('id', jobId);
 
-        // Download video with progress tracking
         const result = await downloadVideo(url, quality, (progress, status, logChunk) => {
             const now = Date.now();
-            
-            // Only update if progress changed significantly or enough time passed
             if (now - lastUpdate > THROTTLE_MS || progress === 1) {
                 lastUpdate = now;
-                
                 const updateData = { message: status };
                 if (progress !== null) updateData.progress = progress;
-                
-                // We don't update the full log here to save bandwidth/rate limits
-                // but we could update a small portion if needed.
                 
                 supabase
                     .from('jobs')
                     .update(updateData)
                     .eq('id', jobId)
                     .then(({ error }) => {
-                        if (error) console.error(`[WORKER] Throttled update error:`, error);
+                        if (error) console.error(`[WORKER] Update error:`, error);
                     });
             }
         });
 
         console.log(`[WORKER] Job ${jobId} completed successfully`);
 
-        // Update to completed (final update, no throttle)
         await supabase
             .from('jobs')
             .update({
@@ -94,7 +80,7 @@ async function processDownload(jobId, url, quality) {
                 message: 'Download complete',
                 file_path: result.storagePath,
                 title: result.title,
-                log: result.log.slice(-5000) // Keep only last 5KB of log
+                log: result.log.slice(-5000)
             })
             .eq('id', jobId);
 
@@ -108,5 +94,6 @@ async function processDownload(jobId, url, quality) {
                 log: error.stack
             })
             .eq('id', jobId);
+        throw error; // Re-throw to inform the caller (the route)
     }
 }
