@@ -34,7 +34,10 @@ export async function downloadVideo(url, quality = '1080p', progressCallback) {
             '--ffmpeg-location', ffmpeg,
             '--newline',
             '--progress',
-            '--referer', 'https://www.youtube.com/embed/'
+            '--referer', 'https://www.youtube.com/embed/',
+            '--user-agent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+            '--extractor-args', 'youtube:player-client=ios,android,mweb;player-skip=web',
+            '--js-runtime', 'node'
         ];
 
         console.log(`[YTDLP] Spawning: ${YTDLP_PATH} ${args.join(' ')}`);
